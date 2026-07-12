@@ -29,7 +29,7 @@ Current OCaml-to-WebAssembly backends compile the OCaml code alone, leaving deve
 
 \indent Large OCaml applications rarely consist of OCaml code alone. They rest on native libraries reached through the foreign function interface (FFI), and those bindings allocate OCaml blocks, read their tags and fields, and call back into the runtime. Porting an application of this kind to the browser raises the question of how to preserve the interaction between OCaml and its dependencies.
 
-Existing OCaml-to-wasm backends (\texttt{js\_of\_ocaml}, \texttt{wasm\_of\_ocaml}, \texttt{wasocaml}) compile the OCaml code and leave the C and C++ behind, so the FFI stubs call runtime functions such as \texttt{caml\_alloc} and \texttt{caml\_callback} that do not exist in the resulting Wasm module. Bridging a native component across the wasm boundary then means hand-writing JavaScript/wasm glue for it, and the effort grows with every binding.
+Existing OCaml-to-wasm backends (\texttt{js\_of\_ocaml}~\cite{jsoo}, \texttt{wasm\_of\_ocaml}, \texttt{wasocaml}) compile the OCaml code and leave the C and C++ behind, so the FFI stubs call runtime functions such as \texttt{caml\_alloc} and \texttt{caml\_callback} that do not exist in the resulting Wasm module. Bridging a native component across the wasm boundary then means hand-writing JavaScript/wasm glue for it, and the effort grows with every binding.
 
 We contribute (i) a general, reproducible recipe to run FFI-heavy OCaml on wasm by compiling the bytecode runtime rather than the code, requiring no per-binding glue. (ii) Three runtime/ABI portability hazards we encountered. (iii) A performance comparison against native MOPSA and \texttt{js\_of\_ocaml} that quantifies the cost of interpretation and finds the wasm build competitive with \texttt{js\_of\_ocaml} where both can run.
 
@@ -52,7 +52,7 @@ Existing solutions do not cover our use case. They are well suited to pure-OCaml
 
 \section{Compiling the bytecode runtime}
 
-\indent The missing \texttt{caml\_*} symbols are provided by the OCaml runtime itself\footnote{We chose to compile the latest OCaml 4 release (4.14.2 when we started), since our target was wasm32 and OCaml 5 dropped support for 32-bit. We have not tested the approach with OCaml 5.}. Once the runtime is included, everything left to compile is C and C++, so we can rely on Emscripten alone \cite{emscripten} and avoid stitching together modules produced by two compilers with two different memory models. The plan is therefore to compile the OCaml to bytecode, compile the runtime plus every native dependency to wasm with Emscripten, link that native bundle statically, and interpret the bytecode on top.
+\indent The missing \texttt{caml\_*} symbols are provided by the OCaml runtime itself\footnote{We chose to compile the latest OCaml 4 release (4.14.2 when we started), since our target was wasm32 and OCaml 5 dropped support for 32-bit.}. Once the runtime is included, everything left to compile is C and C++, so we can rely on Emscripten alone \cite{emscripten} and avoid stitching together modules produced by two compilers with two different memory models. The plan is therefore to compile the OCaml to bytecode, compile the runtime plus every native dependency to wasm with Emscripten, link that native bundle statically, and interpret the bytecode on top.
 
 OCaml normally resolves the C code behind each \texttt{external} dynamically. At startup it \texttt{dlopen}s the native libraries and \texttt{dlsym}s each primitive by name to fill a table of function pointers. Emscripten can emulate dynamic module loading, but that splits the binary into several wasm modules and complicates the build. A fully static approach is available instead.  
 \indent Before searching \texttt{.so} files, \texttt{lookup\_primitive} first consults a built-in table (\texttt{caml\_builtin\_cprim[]} and \texttt{caml\_names\_of\_builtin\_cprim[]}) that \texttt{ocamlc -custom} generates as a \texttt{prims.c} file. We generate our own \texttt{prims.c} as a superset of every primitive the bytecode calls (the runtime core, \texttt{unix}, \texttt{str}, bigarray/int64, and the CamlIDL Apron/GMP stubs), disable the \texttt{dlopen} branch, and let \texttt{ERROR\_ON\_UNDEFINED\_SYMBOLS=1} turn a missing primitive into a link-time failure rather than an \texttt{unknown C primitive} trap in the browser.
@@ -79,7 +79,7 @@ We compared the wasm build with native MOPSA and with \texttt{js\_of\_ocaml} on 
 
 None of this is specific to MOPSA. Any FFI-heavy OCaml application whose native stack is impractical to reimplement can be carried to the browser the same way, and will meet the same class of silent wasm-versus-native divergences.
 
-Most of the recipe is mechanical, and we believe much of it could be automated. Emscripten's build tooling has matured to the point where several of our native dependencies compiled with no patch at all, and the primitive-table generation and static-linking steps are systematic. One can imagine a dedicated build target, for instance in dune, that compiles a whole OCaml project together with its native stack to wasm from sources alone, given an opam switch with sources, leaving only genuinely native components such as LLVM/Clang to case-by-case work. Whether such a reusable path is worth building as a shared effort, at least until a WasmGC backend such as \texttt{wasm\_of\_ocaml} can interoperate with Emscripten-compiled C, is a question we would like to raise with the community. How far the approach carries to OCaml~5 is a further open question, and an early experiment is encouraging, since the \texttt{Tag\_val} issue is already fixed in the latest 5.x and the remaining wasm-hostile behavior appears possible to disable.
+Most of the recipe is mechanical, and we believe much of it could be automated. Emscripten's build tooling has matured to the point where several of our native dependencies compiled with no patch at all, and the primitive-table generation and static-linking steps are systematic. One can imagine a dedicated build target, for instance in dune, that compiles a whole OCaml project together with its native stack to wasm from sources alone, given an opam switch with sources, leaving only genuinely native components such as LLVM/Clang to case-by-case work. Whether such a reusable path is worth building as a shared effort, at least until a WasmGC backend such as \texttt{wasm\_of\_ocaml} can interoperate with Emscripten-compiled C, is a question we would like to raise with the community. How far the approach carries to OCaml 5 is a further open question, and an early experiment is encouraging, since the \texttt{Tag\_val} issue is already fixed in the latest 5.x and the remaining wasm-hostile behavior appears possible to disable.
 
 \paragraph{Availability.}
 The port targets OCaml 4.14 (LLVM/Clang 9, GMP 6.1.2, MPFR 4.2.2) and runs
@@ -96,10 +96,11 @@ We thank Antoine Miné for guiding us through the MOPSA codebase and supporting 
 
 \bibitem{mopsa} M. Journault, A. Miné, R. Monat, and A. Ouadjaout.
 \emph{Combinations of Reusable Abstract Domains for a Multilingual Static
-Analyzer.} VSTTE 2019.
+Analyzer.} VSTTE 2019, LNCS 12031.
 
 \bibitem{trymopsa} R. Monat. \emph{Try-Mopsa: Relational Static Analysis in Your
-Pocket.} arXiv:2509.13128, 2025. \url{https://arxiv.org/abs/2509.13128}.
+Pocket.} VMCAI 2026. arXiv:2509.13128.
+\url{https://arxiv.org/abs/2509.13128}.
 
 \bibitem{apron} B. Jeannet and A. Miné. \emph{Apron: A Library of Numerical
 Abstract Domains for Static Analysis.} CAV 2009, LNCS 5643.
@@ -113,10 +114,10 @@ Js\_of\_ocaml compiler.} Software: Practice and Experience, 44(8), 2014.
 \bibitem{emscripten} A. Zakai. \emph{Emscripten: an LLVM-to-JavaScript Compiler.}
 OOPSLA 2011 (companion), ACM.
 
-\bibitem{ocamlwasm} V. Chan. \emph{ocaml-wasm.} 2021.
+\bibitem{ocamlwasm} V. Chan. \emph{ocaml-wasm.}.
 \url{https://github.com/vincentdchan/ocaml}.
 
-\bibitem{binji} binji. \emph{Building LLVM/Clang to WebAssembly.}
+\bibitem{binji} binji. \emph{Building LLVM/Clang to WebAssembly.}.
 \url{https://gist.github.com/binji/b7541f9740c21d7c6dac95cbc9ea6fca}.
 
 \bibitem{gmpso} Stack Overflow. \emph{Compiling GMP/MPFR with Emscripten.}
