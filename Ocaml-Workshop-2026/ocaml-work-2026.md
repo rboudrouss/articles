@@ -63,13 +63,13 @@ OCaml normally resolves the C code behind each \texttt{external} dynamically. At
 While testing, we encountered hazards that represent code that compiles and links correctly, yet is wrong because wasm (wasm32 particularly) is not the native target it was written for. 
 
 \paragraph{A runtime macro that is unsound on wasm32.}
-The first browser run trapped with ``index out of bounds'', traced to OCaml 4.14's \texttt{Tag\_val}, which reads the block header at offset \texttt{-sizeof(value)}. Since \texttt{sizeof} is unsigned, that offset is \texttt{0xFFFFFFFC}, not \texttt{-4}. On native ILP32 the address wraps in a 32-bit \texttt{add} and lands on \texttt{val-4}, which is why upstream gets away with it everywhere. On wasm32 the backend can fold the non-negative constant into a bounds-checked unsigned \texttt{i32.load} offset that does not wrap, so the access lands ~4\,GiB away and traps. The fold is itself backend-dependent, since \texttt{emcc}/clang~22 traps while \texttt{wasi-sdk} clang~18 does not. It is a genuine portability hazard in the runtime's own macros, not a MOPSA bug.
+The first browser run trapped with ``index out of bounds'', traced to OCaml 4.14's \texttt{Tag\_val}, which reads the block header at offset \texttt{-sizeof(value)}. Since \texttt{sizeof} is unsigned, that offset is \texttt{0xFFFFFFFC}, not \texttt{-4}. On native ILP32 the address wraps in a 32-bit \texttt{add} and lands on \texttt{val-4}, which is why upstream gets away with it everywhere. On wasm32 the backend can fold the non-negative constant into a bounds-checked unsigned \texttt{i32.load} offset that does not wrap, so the access lands ~4\,GiB away and traps. The fold is itself backend-dependent, since \texttt{emcc}/clang~22 traps while \texttt{wasi-sdk} clang~18 does not.
 
 \paragraph{Architecture-dependent ABI in the analyzed program.}
-Unlike the previous one, this hazard is in the C that MOPSA analyzes, not in MOPSA itself. Porting the stack to wasm32 also retargeted MOPSA's embedded Clang from x86-64 to 32-bit, so the sources it parses are now typed for a 32-bit ABI. There \texttt{va\_list} is a scalar \texttt{void*} passed \emph{by reference} to \texttt{\_\_builtin\_va\_start}, so Clang hands MOPSA's type translator an \texttt{LValueReferenceType}, a case it lacked because on x86-64 \texttt{va\_list} is an array that decays to a pointer. That missing case broke the translation of CPython's C sources. Modeling references as pointers (they are ABI-equivalent) restores it and unblocks all cross C/Python analysis on wasm32.
+Unlike the previous one, this hazard is in the C that MOPSA analyzes. Porting the stack to wasm32 also retargeted MOPSA's embedded Clang from x86-64 to 32-bit, so the sources it parses are now typed for a 32-bit ABI. There \texttt{va\_list} is a scalar \texttt{void*} passed \emph{by reference} to \texttt{\_\_builtin\_va\_start}, so Clang hands MOPSA's type translator an \texttt{LValueReferenceType}, a case it lacked because on x86-64 \texttt{va\_list} is an array that decays to a pointer. That missing case broke the translation of CPython's C sources.
 
 \paragraph{A wasm ABI limitation that reaches soundness.}
-WebAssembly has no FPU rounding-mode control, so everything is round-to-nearest and \texttt{fesetround} is a no-op. Apron's interval arithmetic relies on directed rounding for soundness. We sidestep it by compiling every domain with \texttt{NUM\_MPQ} (bounds computed exactly with GMP rationals) and faking the FPU probe, but a residual unsoundness remains where floats reach Apron's API before conversion to rationals. Unlike the first two, this is not a 32-bit quirk but a property of wasm itself, and it is the one that crosses from portability into verification.
+WebAssembly has no FPU rounding-mode control, so everything is round-to-nearest and \texttt{fesetround} is a no-op. It threatens soundness on two fronts. Apron's interval arithmetic relies on directed rounding, which we sidestep by compiling every domain with \texttt{NUM\_MPQ} (bounds computed exactly with GMP rationals) and faking the FPU probe, though a residual unsoundness remains where floats reach Apron's API before conversion to rationals. MOPSA's own float handling (\texttt{floats\_round.c}) depends on the same rounding-mode control, and there we still have no satisfying fix. Widening every interval to a safe over-approximation keeps the analysis sound but coarse. Unlike the first two, this is not a 32-bit quirk but a property of wasm itself, and it is the one that crosses from portability into verification.
 
 
 \section{Discussion and conclusion}
@@ -84,11 +84,20 @@ The port targets OCaml 4.14 (LLVM/Clang 9, GMP 6.1.2, MPFR 4.2.2) and runs
 entirely client-side. Sources are at \url{https://github.com/rboudrouss/mopsa-wasm}.
 
 
+\section{Acknowledgements}
+
+We thank Antoine Miné for guiding us through the MOPSA codebase and supporting this work throughout, and Raphaël Monat for Try-MOPSA \cite{trymopsa}, an all-\texttt{js\_of\_ocaml} build of MOPSA. Try-MOPSA produced the \texttt{js\_of\_ocaml}/VPL configuration we compare against and was invaluable in getting our interactive mode working in the browser. The port also builds on Vincent Chan's \texttt{ocaml-wasm} \cite{ocamlwasm}, which supplied the original Emscripten tweaks, on binji's LLVM-to-wasm fork \cite{binji}, and on a Stack Overflow answer \cite{gmpso} that identified Emscripten-compatible GMP and MPFR versions.
+
+
+
 \begin{thebibliography}{9}
 
 \bibitem{mopsa} M. Journault, A. Miné, R. Monat, and A. Ouadjaout.
 \emph{Combinations of Reusable Abstract Domains for a Multilingual Static
 Analyzer.} VSTTE 2019.
+
+\bibitem{trymopsa} R. Monat. \emph{Try-Mopsa: Relational Static Analysis in Your
+Pocket.} arXiv:2509.13128, 2025. \url{https://arxiv.org/abs/2509.13128}.
 
 \bibitem{apron} B. Jeannet and A. Miné. \emph{Apron: A Library of Numerical
 Abstract Domains for Static Analysis.} CAV 2009, LNCS 5643.
