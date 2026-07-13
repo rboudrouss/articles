@@ -34,7 +34,7 @@ This paper reports on our experience doing so for MOPSA, a static analyzer that 
 
 An OCaml program is either compiled to native machine code or reduced to bytecode that the OCaml runtime interprets. To run in a browser, where neither is available, the existing backends translate the program ahead of time to a web target: \texttt{js\_of\_ocaml}\cite{jsoo} and \texttt{wasm\_of\_ocaml} from the bytecode (to JavaScript and to WebAssembly respectively), \texttt{wasocaml} from the Flambda IR (to WebAssembly). All of them compile the OCaml code and leave the C and C++ behind, so the FFI stubs call runtime functions such as \texttt{caml\_alloc} and \texttt{caml\_callback} that do not exist in the resulting module. Bridging a native component across the boundary then means hand-writing JavaScript/Wasm glue for it, and the effort grows with every binding.
 
-We contribute (i) a general, reproducible recipe to run FFI-heavy OCaml on Wasm by compiling the bytecode runtime rather than the code, requiring no per-binding glue. (ii) Three runtime/ABI portability hazards we encountered. (iii) A performance comparison against native MOPSA and \texttt{js\_of\_ocaml} that quantifies the cost of interpretation and finds the Wasm build competitive with \texttt{js\_of\_ocaml} where both can run.
+We contribute (i) a general, reproducible recipe to run FFI-heavy OCaml on Wasm by compiling the bytecode runtime rather than the code, requiring no per-binding glue. (ii) Three runtime/ABI portability hazards we encountered. (iii) An account of turning the resulting module into a client-side web application, including how the non-re-entrant runtime and the binary's interactive, stdin-driven modes constrain the design. (iv) A performance comparison against the native build and \texttt{js\_of\_ocaml} that quantifies the cost of interpretation and finds the Wasm build competitive with \texttt{js\_of\_ocaml} where both can run.
 
 The project we compiled is MOPSA. A fully client-side live build is available at \url{https://mopsawasm.rboud.com/}.
 
@@ -64,16 +64,30 @@ OCaml normally resolves the C code behind each \texttt{external} dynamically. At
 
 While testing, we encountered hazards where code compiles and links correctly yet is wrong, because Wasm (wasm32 in particular) is not the native target it was written for. 
 
-\paragraph{A runtime macro that is unsound on wasm32.}
-The first browser run trapped with ``index out of bounds'', traced to OCaml 4.14's \texttt{Tag\_val}, which reads the block header at offset \texttt{-sizeof(value)}. Since \texttt{sizeof} is unsigned, that offset is \texttt{0xFFFFFFFC}, not \texttt{-4}. On native ILP32 the address wraps in a 32-bit \texttt{add} and lands on \texttt{val-4}, which is why the issue never surfaces upstream on native targets. On wasm32 the backend can fold the non-negative constant into a bounds-checked unsigned \texttt{i32.load} offset that does not wrap, so the access lands ~4 GiB away and traps. The fold is itself backend-dependent, since \texttt{emcc}/clang 22 traps while \texttt{wasi-sdk} clang 18 does not. We fix it by casting \texttt{sizeof(value)} to a signed \texttt{int} before negating, so the subscript carries a genuine \texttt{-4} instead of the unsigned \texttt{0xFFFFFFFC}. A negative displacement cannot be folded into the load's static offset, so the backend keeps the wrapping \texttt{i32.add} and computes \texttt{val\,-\,4}.
+\paragraph{The \texttt{Tag\_val} macro in 32-bit Wasm.}
+The first browser run trapped with ``index out of bounds'', traced to OCaml 4.14's \texttt{Tag\_val}, which reads the block header at offset \texttt{-sizeof(value)}. Since \texttt{sizeof} is unsigned, that offset is \texttt{0xFFFFFFFC}, not \texttt{-4}. On native ILP32 the address wraps in a 32-bit \texttt{add} and lands on \texttt{val-4}, which is why the issue never surfaces upstream on native targets. On wasm32 the backend can fold the non-negative constant into a bounds-checked unsigned \texttt{i32.load} offset that does not wrap, so the access lands ~4 GiB away and traps. The fold is itself backend-dependent, since \texttt{emcc}/clang 22 traps while \texttt{wasi-sdk} clang 18 does not. Tracing an opaque out-of-bounds trap back to an unsigned negation in a single macro was the hard part, and the fix is simply to cast \texttt{sizeof(value)} to a signed \texttt{int} before negating, so the subscript carries a genuine \texttt{-4} instead of the unsigned \texttt{0xFFFFFFFC}. A negative displacement cannot be folded into the load's static offset, so the backend keeps the wrapping \texttt{i32.add} and computes \texttt{val\,-\,4}.
 
 
-\paragraph{Architecture-dependent ABI in the analyzed program.}
+\paragraph{Interpretation of \texttt{va\_list}.}
 Porting the stack to wasm32 also retargeted MOPSA's embedded Clang from x86-64 to 32-bit, so the sources it parses are now typed for a 32-bit ABI. There \texttt{va\_list} is a scalar \texttt{void*} passed \emph{by reference} to \texttt{\_\_builtin\_va\_start}, so Clang hands MOPSA's type translator an \texttt{LValueReferenceType}, a case it lacked because on x86-64 \texttt{va\_list} is an array that decays to a pointer. That missing case broke the translation of CPython's C sources. We added the missing \texttt{LValueReferenceType} case to \texttt{Clang\_to\_C.ml}'s type translator, modelling the reference as the ABI-equivalent pointer, after which CPython's sources parse correctly.
 
 
-\paragraph{A Wasm ABI limitation that threatens soundness.}
+\paragraph{Floating-point rounding mode.}
 WebAssembly has no FPU rounding-mode control, so everything is round-to-nearest and \texttt{fesetround} is a no-op. This threatens soundness on two fronts. Apron's interval arithmetic relies on directed rounding, which we sidestep by compiling every domain with \texttt{NUM\_MPQ} (bounds computed exactly with GMP rationals) and stubbing out the FPU probe, though a residual unsoundness remains where floats reach Apron's API before conversion to rationals. MOPSA's own float handling (\texttt{floats\_round.c}) depends on the same rounding-mode control, and there we still have no satisfying fix. Widening every interval to a safe over-approximation keeps the analysis sound but coarse. Unlike the first two, this is not a 32-bit quirk but a property of Wasm itself, it affects soundness rather than only portability.
+
+
+\section{From a Wasm module to a web application}
+
+A statically linked \texttt{ocamlrun.wasm} that interprets \texttt{mopsa.bc} is not yet a usable tool. It has to be instantiated, given the files to analyze, and have its output captured, and MOPSA's interactive modes have to be driven while the analysis runs. None of this is specific to OCaml, but two constraints follow from running the unmodified runtime and anyone reusing this methodology will meet them.
+
+\paragraph{A fresh instance per analysis.}
+The OCaml runtime keeps its whole state global and is not re-entrant, and \texttt{mopsa.bc} terminates with \texttt{exit}. Once \texttt{main} returns there is no clean way back to an initial state, so we cannot instantiate the module once and re-run it. Keeping a single instance alive and suspending it around I/O with Emscripten's Asyncify \cite{asyncify} does not work either, because Asyncify and OCaml's \texttt{setjmp}/\texttt{longjmp}-based exceptions both rewrite the stack and interfere. We instead instantiate a fresh module for every analysis, using \texttt{MODULARIZE=1} to expose a factory. This stays affordable because the module is compiled once with \texttt{WebAssembly.compileStreaming} and only re-instantiated per run. Everything invariant is preloaded into Emscripten's virtual filesystem, and the analyzed sources are written into it just before launch. 
+
+
+\paragraph{Blocking standard input for the interactive modes.}
+Batch analysis is a single round-trip, but the interactive REPL and the DAP debugger are long-lived runs that read stdin and block waiting for a reply. The runtime runs synchronously inside a Web Worker, so while it blocks in a read the Worker cannot service messages, and the byte the runtime expects has to be delivered synchronously. The only web primitive that allows a synchronous blocking read from a Worker is the \texttt{SharedArrayBuffer}/\texttt{Atomics.wait} pair \cite{atomics}. The Worker parks on \texttt{Atomics.wait} until the main thread writes the next line into shared memory and wakes it. This requires the page to be cross-origin isolated with the \texttt{COOP} and \texttt{COEP} headers \cite{coisolation}.
+
+On top of this we built a single-page \texttt{React} application that writes the sources into the virtual filesystem, passes the analyzer's options as a command line, and parses the JSON it captures on standard output.
 
 
 \section{Performance}
@@ -133,5 +147,14 @@ OOPSLA 2011 (companion), ACM.
 
 \bibitem{gmpso} Stack Overflow. \emph{Compiling GMP/MPFR with Emscripten.}
 \url{https://stackoverflow.com/a/43583154}.
+
+\bibitem{asyncify} Emscripten. \emph{Asyncify.}
+\url{https://emscripten.org/docs/porting/asyncify.html}.
+
+\bibitem{atomics} ECMA International. \emph{ECMAScript Language Specification, Atomics and SharedArrayBuffer.} ECMA-262.
+\url{https://tc39.es/ecma262/#sec-atomics-object}.
+
+\bibitem{coisolation} MDN Web Docs. \emph{Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy: cross-origin isolation.}
+\url{https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated}.
 
 \end{thebibliography}
