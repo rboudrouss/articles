@@ -396,7 +396,7 @@ None of this is specific to MOPSA, and most of it is mechanical:
 
 **Worth a shared effort?** A dune/opam build target: whole project +
 native stack $\to$ wasm, from an opam switch, at least until a WasmGC
-backend can interoperate with Emscripten-compiled C.
+backend can interoperate with Emscripten/WASI-compiled C.
 \small (OCaml 5? `Tag_val` is fixed in 5.x, but 5 dropped 32-bit.)
 
 ## Try it & thanks
@@ -425,9 +425,14 @@ backend can interoperate with Emscripten-compiled C.
 \vspace{0.5em}
 
 \alert{\textbf{I'm on the job market}}, looking for a **CIFRE PhD** host company
-(French industrial PhD, on static analysis) or an engineering role.
+(French industrial PhD, on static analysis) or an engineering role.  
+`contact@rboud.com` - `https://rboud.com`
 
 # Backup
+
+## Backups {.standout}
+
+Backups
 
 ## Full benchmark synthesis (~100 reps, medians)
 
@@ -447,75 +452,23 @@ inst. = compile + instantiate + unpack `.data` (one-shot first start in the
 browser) · browser "cold" is quasi-hot: the page is shared across files.
 AMD Ryzen 7 1700X, Node 22 (V8 12.4), headless Chromium 149 (Playwright).
 
-## Backup: the `sak` catch
+## Backup: what about JSPI?
 
-OCaml 4.14 introduced `runtime/sak`, a *host* tool that encodes the stdlib
-path as a C string. Under `emconfigure` it silently compiles to a `.wasm`
-that can't run on the host: the path stays empty, failure surfaces at runtime.
+The "existing solutions" we ruled out for suspending around I/O:
 
-```make
-CFLAGS="$(CFLAGS)" $(EMCONFIGURE) ./configure \
-    --disable-native-compiler --disable-systhreads ...
-rm -f runtime/sak runtime/sak.o runtime/sak.wasm
-cc -c -o runtime/sak.o runtime/sak.c && cc -o runtime/sak runtime/sak.o
-touch runtime/sak.o runtime/sak
-CFLAGS="$(CFLAGS)" $(MAKE) -C runtime libcamlrun.a
-```
+- **Asyncify** (Emscripten): rewrites the wasm to unwind/replay the stack, but
+  conflicts with OCaml exceptions (`setjmp`/`longjmp`), they both rewrite the stack
+- so interactive/DAP modes *block* on stdin in a Worker, fed via
+  `SharedArrayBuffer` + `Atomics.wait` (needs cross-origin isolation)
 
-`runtime/` also provides the `<caml/*.h>` headers, so every stub is compiled
-against the exact runtime that executes it.
+**JSPI** (JavaScript-Promise Integration): the *engine* suspends
+the whole wasm stack on an async import, resumes it on resolve.
+No instrumentation, so the `setjmp`/`longjmp` conflict likely disappears;
+a suspending `read` import would replace the whole SAB channel.
 
-## Backup: LLVM/Clang 9, two-stage build
+We stayed with SAB for coverage: JSPI ships in Chrome/Edge (2025) and
+Firefox (2026) but not yet Safari. SAB works in every isolated browser.
 
-**Stage 1 (native)**: only `llvm-tblgen` & `clang-tblgen`, with gcc-11
-(LLVM 9 no longer compiles with recent gcc/clang).
+\small Its underlying *stack switching* is also what OCaml 5 effects
+would need on wasm.
 
-**Stage 2 (wasm)**: cmake with the Emscripten toolchain,
-`-DLLVM_TABLEGEN`/`-DCLANG_TABLEGEN` pointing at stage 1.
-
-```
-ninja clangFrontend clangParse clangAST clangLex clangBasic
-      clangSema clangDriver ... LLVMSupport LLVMCore ...
-```
-
-Only the parsing frontend: no codegen backends, no optimizers.
-Clang's resource headers (`stddef.h`, …) installed then preloaded into
-the virtual FS; `-DCLANGRESOURCE="/clang-headers"`.
-
-## Backup: GMP, MPFR, CamlIDL
-
-- **GMP 6.1.2**: `emconfigure ./configure --disable-assembly --host=none`
-- **MPFR 4.2.2**: `touch aclocal.m4 configure` (skip autoconf re-run),
-  `--with-gmp=$(INSTALL_DIR)`
-- versions pinned to the pair known to compile cleanly with Emscripten
-  (via a Stack Overflow answer; software archaeology counts)
-- **CamlIDL**: runs at *build time* on the host; only its 3-file runtime
-  (`idlalloc.c`, `comintf.c`, `comerror.c`) is compiled to wasm
-- **Apron**: each domain (box, oct, polka) as its own archive, `-DNUM_MPQ`
-
-## Backup: the `va_list` patch in full
-
-```ocaml
-(* References are ABI-equivalent to pointers; model them as such.
-   These surface via builtins such as __builtin_va_start, whose
-   va_list argument is passed by reference when va_list is a scalar
-   (a void pointer) on 32-bit targets, unlike x86-64 where it is an
-   array that decays to a pointer. *)
-| C.LValueReferenceType tq -> T_pointer (type_qual range tq), no_qual
-| C.RValueReferenceType tq -> T_pointer (type_qual range tq), no_qual
-```
-
-Trigger: `share/mopsa/stubs/cpython/Python.c`, `PyErr_Format`'s
-`va_start`; it blocked all cross C/Python analysis on 32-bit.
-
-## Backup: versions & availability
-
-- OCaml **4.14.2** (bytecode runtime) · LLVM/Clang **9** ·
-  GMP **6.1.2** · MPFR **4.2.2** · emcc **4.0.22**
-- artifacts: `ocamlrun.wasm` 15 MB · `ocamlrun.data` 21 MB (virtual FS:
-  `mopsa.bc`, Clang resource headers, linux32 headers, `share/mopsa`)
-- fully client-side: <https://mopsawasm.rboud.com/>
-- sources: <https://github.com/rboudrouss/mopsa-emcc>
-- OCaml 5: `Tag_val` fixed upstream in latest 5.x; early experiment
-  suggests the remaining wasm-hostile behavior can be disabled,
-  but OCaml 5 dropped 32-bit support, so wasm32 needs more than that
