@@ -23,6 +23,62 @@ It works today:
 :::
 ::::
 
+## Why not x ?
+
+We considered using js_
+
+## Ship the runtime itself
+
+The missing `caml_*` symboles are defined in the
+**the OCaml runtime**.
+
+:::: {.columns}
+::: {.column width=48%}
+1. compile MOPSA to **bytecode**
+2. compile the **runtime** + every native dep to wasm (Emscripten)
+3. **link statically** into one module
+4. **interpret** `mopsa.bc` on top
+:::
+::: {.column width=52%}
+```
+┌──────────────────────────────┐
+│   mopsa.bc  (interpreted)    │
+├──────────────────────────────┤
+│  ocamlrun.wasm · one module  │
+│  libcamlrun + prims          │
+│  GMP · MPFR · Apron · Zarith │
+│  camlidl rt · LLVM/Clang     │
+│  Clang_to_ml                 │
+└──────────────────────────────┘
+```
+:::
+::::
+
+\vspace{0.4em}
+
+One toolchain (`emcc`), one memory model, no per-binding glue.
+
+
+## Why not x ?
+
+
+`js_of_ocaml`, `wasm_of_ocaml`, `wasocaml`:
+they compile the OCaml and **leave the C/C++ behind**.
+
+- fine for pure OCaml, or with a JS reimplementation (`zarith_stubs_js`)
+- here: rewrite 5000 lines of `Clang_to_ml.cc` *and* 655 generated stubs?
+
+\vspace{0.6em}
+
+A structural problem: **what do the FFI stubs link against?**
+`caml_alloc`, `caml_callback`, … exist in no translated module.
+
+\vspace{0.6em}
+
+And exposing them wouldn't help: WasmGC backends move OCaml values
+*out of linear memory*, so a C stub reading a tag by pointer
+\alert{cannot reach them at all}.
+
 
 ## The dependency stack
 
@@ -79,58 +135,6 @@ CamlIDL generates ~655 more such stubs for Apron & GMP.
 \vspace{0.5em}
 
 \alert{Every call site bakes in what an OCaml value is, byte for byte, in memory.}
-
-## Why not x ?
-
-`js_of_ocaml`, `wasm_of_ocaml`, `wasocaml`:
-they compile the OCaml and **leave the C/C++ behind**.
-
-- fine for pure OCaml, or with a JS reimplementation (`zarith_stubs_js`)
-- here: rewrite 5000 lines of `Clang_to_ml.cc` *and* 655 generated stubs?
-
-\vspace{0.6em}
-
-A structural problem: **what do the FFI stubs link against?**
-`caml_alloc`, `caml_callback`, … exist in no translated module.
-
-\vspace{0.6em}
-
-And exposing them wouldn't help: WasmGC backends move OCaml values
-*out of linear memory*, so a C stub reading a tag by pointer
-\alert{cannot reach them at all}.
-
-# The solution
-
-## Ship the runtime itself
-
-The missing `caml_*` symboles are defined in the
-**the OCaml runtime**.
-
-:::: {.columns}
-::: {.column width=48%}
-1. compile MOPSA to **bytecode**
-2. compile the **runtime** + every native dep to wasm (Emscripten)
-3. **link statically** into one module
-4. **interpret** `mopsa.bc` on top
-:::
-::: {.column width=52%}
-```
-┌──────────────────────────────┐
-│   mopsa.bc  (interpreted)    │
-├──────────────────────────────┤
-│  ocamlrun.wasm · one module  │
-│  libcamlrun + prims          │
-│  GMP · MPFR · Apron · Zarith │
-│  camlidl rt · LLVM/Clang     │
-│  Clang_to_ml                 │
-└──────────────────────────────┘
-```
-:::
-::::
-
-\vspace{0.4em}
-
-One toolchain (`emcc`), one memory model, no per-binding glue.
 
 ## Binding 1435 externals without dlopen
 
