@@ -149,28 +149,15 @@ ul.task-list{list-style: none;}
 <body>
 <pre class="mermaid"><code>
 
-flowchart TD
-  MOPSA[&quot;MOPSA (OCaml)&quot;]
-  CTM[&quot;Clang_to_ml.cc (FFI)&quot;]
-  MLAPRON[&quot;mlapronidl (camlidl FFI)&quot;]
-  MLGMP[&quot;mlgmpidl (camlidl FFI)&quot;]
-  ZARITH[&quot;Zarith (FFI)&quot;]
-  FR[&quot;floats_round.c (FFI)&quot;]
-  APRON[&quot;Apron (C)&quot;]
-  CLANG[&quot;LLVM / Clang 9 (C++)&quot;]
-  GMP[&quot;GMP (C)&quot;]
-  MPFR[&quot;MPFR (C)&quot;]
-
-  MOPSA --&gt; CTM --&gt; CLANG
-  MOPSA --&gt; FR
-  MOPSA --&gt; MLAPRON --&gt; APRON
-  MOPSA --&gt; MLGMP
-  MOPSA --&gt; ZARITH --&gt; GMP
-  MLGMP --&gt; GMP
-  MLGMP --&gt; MPFR
-  APRON --&gt; GMP
-  APRON --&gt; MPFR
-  MPFR --&gt; GMP</code></pre>
+flowchart LR
+  BC[&quot;mopsa.bc&lt;br&gt;C_CALLn ⟨index⟩&quot;] --&gt; LP[&quot;lookup_primitive(name)&quot;]
+  LP --&gt;|&quot;① static table, FIRST&quot;| TBL[&quot;caml_builtin_cprim[ ]&quot;]
+  LP -.-&gt;|&quot;② only if not found&quot;| DL[&quot;dlopen / dlsym&lt;br&gt;(branch disabled)&quot;]
+  PRIMS[&quot;generated prims.c&lt;br&gt;1435 externs&quot;] ==&gt;|&quot;we regenerate it&quot;| TBL
+  classDef ours fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+  classDef dead fill:#ffebee,stroke:#c62828,stroke-dasharray:5 5
+  class TBL,PRIMS ours
+  class DL dead</code></pre>
 <a href="https://github.com/LaurentRDC/pandoc-plot">Click here to see how this plot was generated.</a>
 </body>
 </html>

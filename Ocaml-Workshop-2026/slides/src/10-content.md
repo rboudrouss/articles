@@ -7,7 +7,7 @@
 **MOPSA**: a static analyzer by abstract interpretation, for C & Python
 
 - written *mostly* in OCaml…
-- …on GMP, MPFR, Zarith, Apron, LLVM/Clang. All bound through the FFI
+- …on GMP, MPFR, Zarith, Apron, **LLVM/Clang**. All bound through the **FFI**
 
 \vspace{0.6em}
 
@@ -23,14 +23,7 @@ It works today:
 :::
 ::::
 
-## Why not x ?
-
-We considered using js_
-
-## Ship the runtime itself
-
-The missing `caml_*` symboles are defined in the
-**the OCaml runtime**.
+## Our solution
 
 :::: {.columns}
 ::: {.column width=48%}
@@ -45,10 +38,7 @@ The missing `caml_*` symboles are defined in the
 │   mopsa.bc  (interpreted)    │
 ├──────────────────────────────┤
 │  ocamlrun.wasm · one module  │
-│  libcamlrun + prims          │
-│  GMP · MPFR · Apron · Zarith │
-│  camlidl rt · LLVM/Clang     │
-│  Clang_to_ml                 │
+│  libcamlrun + deps           │
 └──────────────────────────────┘
 ```
 :::
@@ -61,12 +51,11 @@ One toolchain (`emcc`), one memory model, no per-binding glue.
 
 ## Why not x ?
 
-
-`js_of_ocaml`, `wasm_of_ocaml`, `wasocaml`:
+We considered using `js_of_ocaml`, `wasm_of_ocaml`, `wasocaml` at first but...  
 they compile the OCaml and **leave the C/C++ behind**.
 
 - fine for pure OCaml, or with a JS reimplementation (`zarith_stubs_js`)
-- here: rewrite 5000 lines of `Clang_to_ml.cc` *and* 655 generated stubs?
+- here: rewrite all the parts that uses the FFI ?
 
 \vspace{0.6em}
 
@@ -75,14 +64,14 @@ A structural problem: **what do the FFI stubs link against?**
 
 \vspace{0.6em}
 
-And exposing them wouldn't help: WasmGC backends move OCaml values
+And exposing them wouldn't help: These backends move OCaml values
 *out of linear memory*, so a C stub reading a tag by pointer
 \alert{cannot reach them at all}.
 
 
 ## The dependency stack
 
-```{.mermaid}
+```{.mermaid height=68%}
 flowchart TD
   MOPSA["MOPSA (OCaml)"]
   FR[["floats_round.c"]]
@@ -112,7 +101,7 @@ flowchart TD
 
 Every box ships C or C++ · double-bordered boxes use the FFI to build or read OCaml values
 
-## The FFI goes both ways
+## The FFI part
 
 `Clang_to_ml.cc` 5000 lines, both worlds in one translation unit:
 
@@ -125,12 +114,11 @@ Every box ships C or C++ · double-bordered boxes use the FFI to build or read O
 #include <caml/memory.h>
 ```
 
-Each Clang AST node triggers `caml_alloc` + `Store_field`:
-allocation *inside the OCaml GC heap, from C++*.
+Each Clang AST node triggers an allocation *inside the OCaml GC heap, from C++*.
 
 \vspace{0.5em}
 
-CamlIDL generates ~655 more such stubs for Apron & GMP.
+Also CamlIDL generates ~655 more stubs for Apron & GMP.
 
 \vspace{0.5em}
 
@@ -138,38 +126,24 @@ CamlIDL generates ~655 more such stubs for Apron & GMP.
 
 ## Binding 1435 externals without dlopen
 
-Bytecode never calls C directly: `C_CALLn <index>`, resolved at startup
-by `dlopen`/`dlsym`.  
-But read the interpreter's lookup path first:
+Bytecode never calls C directly: `C_CALLn <index>` is resolved *by name*
+at startup, but the interpreter checks its own table **before** `dlsym`:
 
-:::: {.columns}
-::: {.column width=52%}
-```c
-static c_primitive
-lookup_primitive(char *name) {
-  /* 1. static table, FIRST */
-  for (i = 0; names[i]; i++)
-    if (!strcmp(name, names[i]))
-      return builtin_cprim[i];
-  /* 2. only then: dlsym() */
+```{.mermaid}
+flowchart LR
+  BC["mopsa.bc<br>C_CALLn ⟨index⟩"] --> LP["lookup_primitive(name)"]
+  LP -->|"① static table, FIRST"| TBL["caml_builtin_cprim[ ]"]
+  LP -.->|"② only if not found"| DL["dlopen / dlsym<br>(branch disabled)"]
+  PRIMS["generated prims.c<br>1435 externs"] ==>|"we regenerate it"| TBL
+  classDef ours fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+  classDef dead fill:#ffebee,stroke:#c62828,stroke-dasharray:5 5
+  class TBL,PRIMS ours
+  class DL dead
 ```
-:::
-::: {.column width=48%}
-```c
-/* generated prims.c */
-extern value caml_array_get();
-extern value unix_read();
-/* ... 1435 lines ... */
-c_primitive caml_builtin_cprim[]
-  = { caml_array_get,
-      unix_read, /*...*/ 0 };
-```
-:::
-::::
 
-Scan every C/C++ source,
-generate a **superset** `prims.c` (runtime core, `unix` (131), `str`,
-bigarray, **655 camlidl** Apron/GMP stubs), disable the `dlopen` branch.
+Scan every C/C++ source for stubs, emit a **superset** table (runtime core,
+`unix` (131), `str`, bigarray, **655 camlidl** Apron/GMP stubs)
+so every primitive resolves **inside the module**, no `dlopen` ever.
 
 ## The build montage
 
@@ -245,7 +219,7 @@ Easy hypotheses, eliminated:
 ```
 
 **Native 32-bit:** `p + 0xFFFFFFFC` is a wrapping 32-bit add
-$\to$ exactly `p − 4`. Upstream OCaml works everywhere, *by wraparound*.
+$\to$ exactly `p − 4`. Upstream OCaml works everywhere, *by wrap-around*.
 
 \vspace{0.5em}
 
@@ -258,31 +232,35 @@ $\to$ exactly `p − 4`. Upstream OCaml works everywhere, *by wraparound*.
 LLVM may fold any *non-negative* constant into `offset=N`. `0xFFFFFFFC`
 qualifies $\to$ effective address $\approx$ 4 GiB $\to$ the bounds check \alert{traps}.
 
-## Exhibit A: the only difference is signedness
+## Exhibit A: the only difference is signedness {.fragile}
 
 :::: {.columns}
 ::: {.column width=52%}
-```
+```{=latex}
+\begin{Verbatim}[commandchars=\\\{\}]
 ;; ((unsigned char *) v)
 ;;      [-sizeof(value)]
 (func $tag_old (param i32)
                (result i32)
   local.get 0
-  i32.load8_u
-    offset=4294967292)
+\hlbad{  i32.load8_u}
+\hlbad{    offset=4294967292)}
+\end{Verbatim}
 ```
 \small folded into the load $\to$ \alert{traps}
 :::
 ::: {.column width=48%}
-```
+```{=latex}
+\begin{Verbatim}[commandchars=\\\{\}]
 ;; ((unsigned char *) v)
 ;;      [-(int)sizeof(value)]
 (func $tag_fixed (param i32)
                  (result i32)
   local.get 0
   i32.const -4
-  i32.add
-  i32.load8_u)
+\hlgood{  i32.add}
+\hlgood{  i32.load8_u)}
+\end{Verbatim}
 ```
 \small wrapping add $\to$ `p − 4`, fine
 :::
@@ -296,6 +274,11 @@ can't be folded into `offset=N`. (re-verified with the project's `emcc` 4.0.22)
 \small The fold is backend luck: `wasi-sdk` clang 18 declines it.
 The fix removes the bet entirely.
 
+## and at runtime, in the browser {.standout}
+
+\Large\texttt{unhandled type:}\
+\Large\texttt{lvalue\_ref(\_\_builtin\_va\_list=void*)}
+
 ## Exhibit B: `va_list` changes shape
 
 Porting to wasm32 also retargeted the *embedded* Clang to 32-bit:
@@ -306,9 +289,6 @@ the sources MOPSA parses are now typed for a 32-bit ABI.
   `__builtin_va_start` $\to$ an `LValueReferenceType`,
   a case the type translator never needed before
 
-```
-unhandled type: lvalue_ref(__builtin_va_list=void*)
-```
 
 This broke parsing of the CPython stabs, and with them
 **all cross C/Python analysis**. The fix (a reference is ABI-equivalent
@@ -318,20 +298,28 @@ to a pointer):
 | C.LValueReferenceType tq -> T_pointer (type_qual range tq), no_qual
 ```
 
+## and at runtime, in the browser {.standout}
+
+\Large\texttt{I works finaly !}\
+\Large\texttt{But float interval analysis are weird ?}\
+\large\texttt{+ some FPU warnings}
+
 ## Exhibit C: nobody controls the rounding
 
 Wasm has **no FPU rounding-mode control**: everything rounds to nearest,
-`fesetround` is a no-op. Not a 32-bit quirk: \alert{a property of wasm itself.}
 
 ![](assets/chart-rounding.pdf){width=88%}
 
 - **Apron**: compile every domain with `NUM_MPQ`, so bounds are computed in
-  exact GMP rationals and `fesetround` is never needed. Stub the FPU probe
-  (`-Wl,--wrap=ap_fpu_init`). *Residual*: floats reaching Apron's API.
+  exact GMP rationals and `fesetround` is never needed.*Residual*: floats reaching Apron's API.
 - **MOPSA's own `floats_round.c`**: *no satisfying fix yet*;
   widening keeps the analysis sound but coarse.
 
 # From module to app
+
+## From module to app {.standout}
+
+How does the web app work ?
 
 ## A fresh instance per analysis
 

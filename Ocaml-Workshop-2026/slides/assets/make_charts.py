@@ -173,14 +173,14 @@ def chart_rounding():
     ax.plot([up_x], [0], marker="o", ms=9, color=GOOD, zorder=3)
     ax.annotate("", xy=(up_x - 0.12, 0.42), xytext=(true_x + 0.12, 0.42),
                 arrowprops=dict(arrowstyle="->", color=GOOD, lw=1.6))
-    ax.text(6.0, 0.95, "fesetround(FE_UPWARD): rounds outward — sound  ✓",
+    ax.text(6.0, 0.95, "fesetround(FE_UPWARD): rounds outward, sound  ✓",
             ha="left", fontsize=10.5, color=GOOD)
     # round-to-nearest: may land left of the true bound -> unsound
     near_x = 4.3
     ax.plot([near_x], [0], marker="o", ms=9, color=BAD, zorder=3)
     ax.annotate("", xy=(near_x + 0.12, -0.42), xytext=(true_x - 0.12, -0.42),
                 arrowprops=dict(arrowstyle="->", color=BAD, lw=1.6))
-    ax.text(0.2, -1.05, "round-to-nearest (all wasm has): may round inward — "
+    ax.text(0.2, -1.05, "round-to-nearest (all wasm has): may round inward, "
             "values escape the interval  ✗", ha="left", fontsize=10.5, color=BAD)
     save(fig, "chart-rounding")
 

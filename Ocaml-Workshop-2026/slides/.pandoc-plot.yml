@@ -1,0 +1,9 @@
+directory: plots/
+source: false
+# Vector output for LaTeX/beamer
+format: PDF
+
+mermaid:
+  executable: mmdc
+  # transparent background + crop the PDF page to the chart
+  command_line_arguments: -b transparent --pdfFit
