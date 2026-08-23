@@ -95,7 +95,7 @@ def chart_slowdown():
     ax.text(1.01, n_c + (len(items) - n_c - 1) / 2, "Python",
             transform=ax.get_yaxis_transform(), va="center", ha="left",
             fontsize=10, color=MUTED, clip_on=False)
-    ax.set_title("wasm's own clock is a stub (reports 0.000s) — wall-clock times, Node 22",
+    ax.set_title("wasm's own clock is a stub (reports 0.000s): wall-clock times, Node 22",
                  fontsize=9, color=MUTED, loc="left", pad=8)
     save(fig, "chart-slowdown")
 
@@ -117,7 +117,7 @@ def chart_cumulative():
         [("Node", "wasm-node", "jsoo-node"), ("Browser", "wasm-browser", "jsoo-browser")],
     ):
         n = list(range(0, 11))
-        for target, color, label in ((wt, BLUE, "wasm"), (jt, ORANGE, "jsoo")):
+        for target, color, label in ((wt, BLUE, "wasm"), (jt, ORANGE, "JavaScript")):
             inst, cold, warm = series(target)
             # jsoo cannot re-enter a warm state: every analysis is cold
             if target.startswith("jsoo"):
@@ -136,8 +136,8 @@ def chart_cumulative():
         ax.margins(x=0.14)
     axes[0].set_ylabel("cumulative time (s)", fontsize=10)
     axes[0].annotate("a fresh OCaml state needs a fresh JS realm:\n"
-                     "every jsoo analysis is a first run — the\n"
-                     "slope never flattens",
+                     "every JavaScript analysis is a first run,\n"
+                     "so the slope never flattens",
                      xy=(6, 0.359 + 6 * 0.371), xytext=(0.4, 5.2),
                      fontsize=8.5, color=MUTED,
                      arrowprops=dict(arrowstyle="-", color=GRAY, lw=0.8))
@@ -145,7 +145,7 @@ def chart_cumulative():
                      xy=(6, 0.641 + 0.356 + 5 * 0.304), xytext=(2.6, 6.4),
                      fontsize=8.5, color=MUTED,
                      arrowprops=dict(arrowstyle="-", color=GRAY, lw=0.8))
-    fig.suptitle("startup + N successive analyses — Python corpus medians",
+    fig.suptitle("startup + N successive analyses (Python corpus medians)",
                  fontsize=9.5, color=MUTED, y=1.04)
     save(fig, "chart-cumulative")
 

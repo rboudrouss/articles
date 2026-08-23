@@ -10,6 +10,7 @@ theme: metropolis
 themeoptions:
   - numbering=none
   - progressbar=frametitle
+  - sectionpage=none
 header-includes:
   - \usepackage{graphicx}
   - \metroset{block=fill}

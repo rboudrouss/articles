@@ -1,22 +1,3 @@
-<!--
-## first run, in the browser {.standout}
-
-\Large\texttt{Uncaught RuntimeError:}\
-\Large\texttt{index out of bounds}
-
-\vspace{1em}
-
-\normalsize
-a 15 MB \texttt{.wasm} \quad·\quad 1435 primitives resolved \quad·\quad links clean
-
-\vspace{0.6em}
-
-\small This talk is the story of that trap.
-
-## The case: MOPSA, 100% client-side
-
--->
-
 # The case file
 
 ## The project
@@ -99,13 +80,13 @@ CamlIDL generates ~655 more such stubs for Apron & GMP.
 
 \alert{Every call site bakes in what an OCaml value is, byte for byte, in memory.}
 
-## The usual suspects don't fit
+## Why not x ?
 
 `js_of_ocaml`, `wasm_of_ocaml`, `wasocaml`:
 they compile the OCaml and **leave the C/C++ behind**.
 
 - fine for pure OCaml, or with a JS reimplementation (`zarith_stubs_js`)
-- here: rewrite 5000 lines of `Clang_to_ml.cc` *and* 655 generated stubs? no.
+- here: rewrite 5000 lines of `Clang_to_ml.cc` *and* 655 generated stubs?
 
 \vspace{0.6em}
 
@@ -190,15 +171,14 @@ bigarray, **655 camlidl** Apron/GMP stubs), disable the `dlopen` branch.
 
 | library | version | manual trick |
 |:---|:---|:------|
-| OCaml runtime | 4.14.2 | `sak` is a *host* tool: rebuild with real `cc` |
-| GMP | 6.1.2 | `--disable-assembly --host=none` |
+| OCaml runtime | 4.14.2 | `sak` is a *host* tool, rebuild with real `cc` |
+| GMP | 6.1.2 | n/a |
 | MPFR | 4.2.2 | n/a |
 | CamlIDL runtime | latest | 3 files, compiles as-is |
 | Apron | lastest | n/a |
-| LLVM/Clang | 9 | two-stage: native `tblgen` (gcc-11), then `emcc` |
-| `Clang_to_ml.cc` | n/a | Clang *and* caml headers |
-
-\vspace{0.4em}
+| LLVM/Clang | 9 | Crosscompilation & adapting the flags |
+| `Clang_to_ml.cc` | n/a | n/a (appart from linking the needed headers) |
+| Camlidl stubs | n/a | Generated C files & compiled them |
 
 OCaml 4.14, not 5: the target is wasm32, and OCaml 5 dropped 32-bit.  
 Several dependencies compiled with **no patch at all**.
@@ -397,7 +377,7 @@ Interpreted bytecode on wasm vs native compiled code, V8 steady state.
 `int_tests.c` 40 ms $\to$ 384 ms  
 `struct_tests.c` 411 ms $\to$ 3.77 s
 
-## Where js_of_ocaml can't follow
+## Comparaison with javascript
 
 the baseline is **Try-MOPSA**, a scaled-down jsoo build: no C frontend, Apron replaced
 by VPL (pure OCaml).
@@ -410,9 +390,9 @@ optimistic for jsoo: its 22 MB bundle parse is charged only once
 
 # Closing
 
-## What wasm32 actually taught us
+## Conclusion
 
-*wasm32 is almost a 32-bit target; the differences hide in the corners.*
+*wasm32 is almost a 32-bit target*
 
 \vspace{0.6em}
 
@@ -422,10 +402,6 @@ optimistic for jsoo: its 22 MB bundle parse is charged only once
 | a Clang parser bug | 32-bit ABI: `va_list` passed by reference | loud error |
 | *nothing at all* | no rounding-mode control in wasm | \alert{silent unsoundness} |
 
-\vspace{0.6em}
-
-Two failures were loud, the third silent:
-\alert{the silent one is the reason to talk about this.}
 
 ## The community question
 
@@ -469,7 +445,7 @@ backend can interoperate with Emscripten-compiled C.
 \vspace{0.5em}
 
 \alert{\textbf{I'm on the job market}}, looking for a **CIFRE PhD** host company
-(French industrial PhD, on static analysis) or an engineering role
+(French industrial PhD, on static analysis) or an engineering role.
 
 # Backup
 
