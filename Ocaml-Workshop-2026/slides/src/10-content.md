@@ -326,40 +326,24 @@ How does the web app work ?
 The OCaml runtime keeps its state **global** and is not re-entrant,
 and `mopsa.bc` ends with `exit`. There is no clean way back.
 
-- keep one instance, suspend around I/O with **Asyncify**?
-  incompatible: OCaml exceptions are `setjmp`/`longjmp`,
-  and both rewrite the stack
+- Existing possible solution are not compatible with Ocaml's exceptions that uses `setjmp`/`longjmp`.
 - **a fresh instance for every analysis** (`MODULARIZE=1`)
 
 \vspace{0.5em}
 
-The web worker fetches + `compileStreaming`s the module **once**, then each analysis
+The web worker fetches + compiles the module **once**, then each analysis
 only *re-instantiates* the already-compiled module.
 
 Full module setup (compile, instantiate, unpack the FS data) is
-**63 ms** under Node, re-instantiation alone is cheaper still.  
+**63 ms** under Node.  
 \small (Browser: 641 ms for the one-shot first start, fetch included.)
 
-## The interactive debugger is a frozen Worker
+# Performance
 
-:::: {.columns}
-::: {.column width=52%}
-Interactive REPL & DAP debugger: long-lived runs that **block reading stdin**,
-inside a Worker that can't service `postMessage` while frozen.
 
-\vspace{0.4em}
+## Performance {.standout}
 
-The only web primitive that fits:
-**`SharedArrayBuffer` + `Atomics.wait`**
-(needs cross-origin isolation)
-Cross Origin Embedder Policy and Cross Origin Opener Policy HTTP headers 
-:::
-::: {.column width=48%}
-![](assets/mopsa-web-interactive2.png)
-:::
-::::
-
-# The receipts
+How does our wasm perform ?
 
 ## The cost of interpretation
 
@@ -381,6 +365,10 @@ repeated Python: wasm ~1.3× (Node) / ~3.4× (browser) ahead
 optimistic for jsoo: its 22 MB bundle parse is charged only once
 
 # Closing
+
+## Conclusion {.standout}
+
+Conclusion
 
 ## Conclusion
 
